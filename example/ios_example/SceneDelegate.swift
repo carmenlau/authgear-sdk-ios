@@ -49,4 +49,17 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // Use this method to save data, release shared resources, and store enough scene-specific state information
         // to restore the scene back to its current state.
     }
+
+    func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+        guard userActivity.activityType == NSUserActivityTypeBrowsingWeb,
+              let url = userActivity.webpageURL else {
+            return
+        }
+        if app.container?.handleWeChatRedirectURI(url) == true {
+            return
+        }
+
+        let appDelegate = UIApplication.shared.delegate as? AppDelegate
+        WXApi.handleOpenUniversalLink(userActivity, delegate: appDelegate)
+    }
 }
