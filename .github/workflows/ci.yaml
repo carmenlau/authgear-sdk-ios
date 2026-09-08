@@ -59,6 +59,54 @@ jobs:
         api_key_base64: ${{ secrets.IOS_API_KEY_BASE64 }}
         output_path: ./build/fastlane-api-key.json
     - run: make build-app
+    # TODO(demo-app2app): temporary diagnostic, remove once the app1 upload
+    # failure is understood.
+    #
+    # app1 uploads fail with "the bundle identifier cannot be changed from the
+    # current value, 'com.authgear.sdk.exampleapp.ios.app2'" even though the
+    # ipa carries app1's own bundle id. This step gathers two facts:
+    #
+    # 1. The ipa's real CFBundleIdentifier, which so far has only been
+    #    inferred from which app pilot resolved.
+    # 2. Whether altool reproduces the 409 with no fastlane in the loop.
+    #    FastlaneCore::AltoolTransporterExecutor issues
+    #    `altool --upload-app -f <ipa>`, so --validate-app -f <ipa> exercises
+    #    the same server-side app-inference path, and may report a more
+    #    detailed error payload than fastlane surfaces.
+    #
+    # --validate-app runs the same validation as --upload-app but uploads
+    # nothing, so this is safe to run on any branch.
+    - name: Inspect ipa and validate with altool directly (diagnostic)
+      continue-on-error: true
+      env:
+        API_KEY_ID: ${{ secrets.IOS_API_KEY_ID }}
+        API_KEY_ISSUER: ${{ secrets.IOS_API_KEY_ISSUER }}
+        API_KEY_BASE64: ${{ secrets.IOS_API_KEY_BASE64 }}
+      run: |
+        IPA=./build/Release/iOS/ios_example/ios_example.ipa
+        # Non-fatal: the job runs under `bash -eo pipefail`, and this is only
+        # informational - it must not stop the altool check below from running.
+        echo "--- ipa CFBundleIdentifier ---"
+        unzip -p "$IPA" 'Payload/*.app/Info.plist' \
+          | plutil -extract CFBundleIdentifier raw - \
+          || echo "(could not read bundle id from ipa)"
+        echo "--- altool --validate-app ---"
+        # The decoded key must never reach the log. GitHub masks the base64
+        # form (it is a secret value) but NOT the decoded form, so:
+        #  - pipe straight into the file, never to stdout
+        #  - 2>/dev/null so a decode error cannot echo anything
+        #  - check the result with test -s, which reports success/failure
+        #    without printing the contents
+        KEYFILE=~/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8
+        mkdir -p ~/.appstoreconnect/private_keys
+        echo -n "$API_KEY_BASE64" | base64 --decode > "$KEYFILE" 2>/dev/null
+        chmod 600 "$KEYFILE"
+        test -s "$KEYFILE" || { echo "failed to decode API key"; exit 1; }
+        xcrun altool --validate-app \
+          -f "$IPA" \
+          -t ios \
+          --apiKey "$API_KEY_ID" \
+          --apiIssuer "$API_KEY_ISSUER"
     - name: Upload to TestFlight
       if: ${{ github.ref == 'refs/heads/main' }}
       run: make upload-app
